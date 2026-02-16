@@ -4,17 +4,26 @@ import (
 	"flag"
 	"fmt"
 	"html/template"
+	"io"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/sebastiaofortes/pdf-to-html/converter"
+	"github.com/sebastiaofortes/pdf-to-html/store"
 )
 
-const samplesDir = "samples"
+const (
+	samplesDir = "samples"
+	dbFile     = "data/books.json"
+)
+
+// db é o banco de dados de metadados dos PDFs.
+var db *store.Store
 
 func main() {
 	// Definir flags da CLI
@@ -54,7 +63,24 @@ func startServer(port string) {
 		os.Exit(1)
 	}
 
+	// Inicializar o banco de dados
+	if err := os.MkdirAll(filepath.Dir(dbFile), 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "Erro ao criar diretório de dados: %v\n", err)
+		os.Exit(1)
+	}
+
+	var err error
+	db, err = store.New(dbFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Erro ao inicializar banco de dados: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Garantir que a pasta de samples existe
+	os.MkdirAll(samplesDir, 0755)
+
 	http.HandleFunc("/", handleList)
+	http.HandleFunc("/upload", handleUpload)
 	http.HandleFunc("/convert", handleConvert)
 	http.HandleFunc("/health", handleHealth)
 
@@ -62,14 +88,256 @@ func startServer(port string) {
 	fmt.Printf("\nServidor iniciado em http://localhost%s\n", addr)
 	fmt.Println()
 	fmt.Println("Endpoints:")
-	fmt.Println("  GET /                                                         → lista PDFs disponíveis")
-	fmt.Println("  GET /convert?pdf=<caminho>&page=<N>&zoom=<N>&fmt=<png|jpg>    → converte PDF para HTML")
-	fmt.Println("  GET /health                                                   → status do servidor")
+	fmt.Println("  GET  /                                                         → lista PDFs disponíveis")
+	fmt.Println("  GET  /upload                                                   → página de upload")
+	fmt.Println("  POST /upload                                                   → enviar PDF + idioma")
+	fmt.Println("  GET  /convert?pdf=<caminho>&page=<N>&zoom=<N>&fmt=<png|jpg>    → converte PDF para HTML")
+	fmt.Println("  GET  /health                                                   → status do servidor")
 	fmt.Println()
 	fmt.Printf("Abra no navegador: http://localhost%s\n", addr)
 	fmt.Println()
 
 	log.Fatal(http.ListenAndServe(addr, nil))
+}
+
+// uploadTemplate é o template HTML para a página de upload de PDFs.
+var uploadTemplate = template.Must(template.New("upload").Parse(`<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF to HTML — Upload</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #f5f5f5;
+            color: #333;
+            padding: 2rem;
+        }
+        h1 { font-size: 1.5rem; margin-bottom: 0.5rem; }
+        .subtitle { color: #666; margin-bottom: 2rem; font-size: 0.9rem; }
+        .back-link { color: #1a73e8; text-decoration: none; font-size: 0.9rem; }
+        .back-link:hover { text-decoration: underline; }
+        .upload-form {
+            max-width: 500px;
+            background: #fff;
+            border: 1px solid #ddd;
+            border-radius: 12px;
+            padding: 2rem;
+            margin-top: 1.5rem;
+        }
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+        .form-group label {
+            display: block;
+            font-weight: 500;
+            margin-bottom: 0.5rem;
+            font-size: 0.9rem;
+        }
+        .form-group input[type="file"] {
+            width: 100%;
+            padding: 0.5rem;
+            border: 2px dashed #ccc;
+            border-radius: 8px;
+            background: #fafafa;
+            cursor: pointer;
+        }
+        .form-group input[type="file"]:hover {
+            border-color: #1a73e8;
+        }
+        .lang-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 0.5rem;
+        }
+        .lang-option {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            padding: 0.4rem 0.6rem;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            transition: all 0.15s;
+        }
+        .lang-option:hover { background: #f0f7ff; border-color: #1a73e8; }
+        .lang-option input[type="radio"] { accent-color: #1a73e8; }
+        .lang-option input[type="radio"]:checked + span { font-weight: 600; }
+        .submit-btn {
+            display: inline-block;
+            background: #1a73e8;
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            padding: 0.7rem 2rem;
+            font-size: 0.95rem;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .submit-btn:hover { background: #1557b0; }
+        .msg {
+            margin-top: 1rem;
+            padding: 0.75rem 1rem;
+            border-radius: 8px;
+            font-size: 0.9rem;
+        }
+        .msg.success { background: #e6f4ea; color: #1e7e34; border: 1px solid #b7dfbf; }
+        .msg.error { background: #fce8e6; color: #c5221f; border: 1px solid #f5c6cb; }
+    </style>
+</head>
+<body>
+    <a href="/" class="back-link">&#8592; Voltar à lista</a>
+    <h1 style="margin-top: 1rem;">Upload de PDF</h1>
+    <p class="subtitle">Envie um arquivo PDF e selecione o idioma original do documento.</p>
+
+    {{if .Message}}
+    <div class="msg {{if .IsError}}error{{else}}success{{end}}">{{.Message}}</div>
+    {{end}}
+
+    <div class="upload-form">
+        <form method="POST" action="/upload" enctype="multipart/form-data">
+            <div class="form-group">
+                <label>Arquivo PDF</label>
+                <input type="file" name="pdf" accept=".pdf" required>
+            </div>
+            <div class="form-group">
+                <label>Idioma original do documento</label>
+                <div class="lang-grid">
+                    <label class="lang-option">
+                        <input type="radio" name="language" value="en" checked>
+                        <span>English</span>
+                    </label>
+                    <label class="lang-option">
+                        <input type="radio" name="language" value="pt">
+                        <span>Português</span>
+                    </label>
+                    <label class="lang-option">
+                        <input type="radio" name="language" value="es">
+                        <span>Español</span>
+                    </label>
+                    <label class="lang-option">
+                        <input type="radio" name="language" value="fr">
+                        <span>Français</span>
+                    </label>
+                    <label class="lang-option">
+                        <input type="radio" name="language" value="de">
+                        <span>Deutsch</span>
+                    </label>
+                    <label class="lang-option">
+                        <input type="radio" name="language" value="it">
+                        <span>Italiano</span>
+                    </label>
+                    <label class="lang-option">
+                        <input type="radio" name="language" value="ja">
+                        <span>日本語</span>
+                    </label>
+                    <label class="lang-option">
+                        <input type="radio" name="language" value="zh">
+                        <span>中文</span>
+                    </label>
+                    <label class="lang-option">
+                        <input type="radio" name="language" value="ru">
+                        <span>Русский</span>
+                    </label>
+                    <label class="lang-option">
+                        <input type="radio" name="language" value="ko">
+                        <span>한국어</span>
+                    </label>
+                    <label class="lang-option">
+                        <input type="radio" name="language" value="ar">
+                        <span>العربية</span>
+                    </label>
+                    <label class="lang-option">
+                        <input type="radio" name="language" value="nl">
+                        <span>Nederlands</span>
+                    </label>
+                </div>
+            </div>
+            <button type="submit" class="submit-btn">Enviar PDF</button>
+        </form>
+    </div>
+</body>
+</html>`))
+
+// uploadData contém os dados para o template de upload.
+type uploadData struct {
+	Message string
+	IsError bool
+}
+
+// handleUpload processa GET (exibir formulário) e POST (receber PDF).
+func handleUpload(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		uploadTemplate.Execute(w, uploadData{})
+		return
+	}
+
+	if r.Method != http.MethodPost {
+		http.Error(w, "Método não permitido.", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Limitar tamanho do upload a 100MB
+	r.ParseMultipartForm(100 << 20)
+
+	// Obter arquivo
+	file, header, err := r.FormFile("pdf")
+	if err != nil {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		uploadTemplate.Execute(w, uploadData{Message: "Erro ao ler arquivo: " + err.Error(), IsError: true})
+		return
+	}
+	defer file.Close()
+
+	// Validar extensão
+	if !strings.HasSuffix(strings.ToLower(header.Filename), ".pdf") {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		uploadTemplate.Execute(w, uploadData{Message: "Apenas arquivos PDF são aceitos.", IsError: true})
+		return
+	}
+
+	// Obter idioma
+	language := r.FormValue("language")
+	if language == "" {
+		language = "en"
+	}
+
+	// Salvar arquivo na pasta samples
+	dstPath := filepath.Join(samplesDir, header.Filename)
+	dst, err := os.Create(dstPath)
+	if err != nil {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		uploadTemplate.Execute(w, uploadData{Message: "Erro ao salvar arquivo: " + err.Error(), IsError: true})
+		return
+	}
+	defer dst.Close()
+
+	if _, err := io.Copy(dst, file); err != nil {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		uploadTemplate.Execute(w, uploadData{Message: "Erro ao copiar arquivo: " + err.Error(), IsError: true})
+		return
+	}
+
+	// Salvar metadados no banco de dados
+	meta := store.PDFMeta{
+		Filename:   header.Filename,
+		Language:   language,
+		UploadedAt: time.Now(),
+	}
+	if err := db.Set(dstPath, meta); err != nil {
+		log.Printf("Erro ao salvar metadados: %v", err)
+	}
+
+	log.Printf("Upload: %s (idioma: %s)", header.Filename, language)
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	uploadTemplate.Execute(w, uploadData{
+		Message: fmt.Sprintf("PDF \"%s\" enviado com sucesso! Idioma: %s", header.Filename, language),
+	})
 }
 
 // listTemplate é o template HTML para a página de listagem de PDFs.
@@ -125,6 +393,16 @@ var listTemplate = template.Must(template.New("list").Parse(`<!DOCTYPE html>
         .pdf-name {
             font-weight: 500;
         }
+        .lang-tag {
+            background: #f0e6ff;
+            color: #7c3aed;
+            font-size: 0.7rem;
+            padding: 0.15rem 0.5rem;
+            border-radius: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+            margin-left: 0.5rem;
+        }
         .pdf-badge {
             margin-left: auto;
             background: #e0f0ff;
@@ -149,15 +427,19 @@ var listTemplate = template.Must(template.New("list").Parse(`<!DOCTYPE html>
     </style>
 </head>
 <body>
-    <h1>PDF to HTML</h1>
+    <div style="display: flex; align-items: center; justify-content: space-between; max-width: 600px;">
+        <h1>PDF to HTML</h1>
+        <a href="/upload" style="background: #1a73e8; color: #fff; padding: 0.5rem 1.2rem; border-radius: 8px; text-decoration: none; font-size: 0.85rem;">+ Upload PDF</a>
+    </div>
     <p class="subtitle">Clique em um PDF para continuar de onde parou.</p>
     {{if .Files}}
     <ul class="pdf-list">
         {{range .Files}}
         <li class="pdf-item">
-            <a href="#" onclick="openPdf('{{.Path}}'); return false;">
+            <a href="#" onclick="openPdf('{{.Path}}', '{{.Lang}}'); return false;">
                 <span class="pdf-icon">&#128196;</span>
                 <span class="pdf-name">{{.Name}}</span>
+                {{if .Lang}}<span class="lang-tag">{{.Lang}}</span>{{end}}
                 <span class="pdf-badge" id="badge-{{.Path}}"></span>
                 <span class="pdf-arrow">&#8594;</span>
             </a>
@@ -176,10 +458,12 @@ var listTemplate = template.Must(template.New("list").Parse(`<!DOCTYPE html>
             } catch(e) { return null; }
         }
 
-        function openPdf(pdfPath) {
+        function openPdf(pdfPath, lang) {
             var bookmark = getBookmark(pdfPath);
             var page = bookmark ? bookmark.page : 1;
-            window.location.href = '/convert?pdf=' + encodeURIComponent(pdfPath) + '&page=' + page;
+            var url = '/convert?pdf=' + encodeURIComponent(pdfPath) + '&page=' + page;
+            if (lang) url += '&lang=' + encodeURIComponent(lang);
+            window.location.href = url;
         }
 
         // Mostrar badges com a última página lida
@@ -201,6 +485,7 @@ var listTemplate = template.Must(template.New("list").Parse(`<!DOCTYPE html>
 type pdfFile struct {
 	Name string
 	Path string
+	Lang string
 }
 
 // handleList lista os PDFs disponíveis na pasta samples.
@@ -219,9 +504,15 @@ func handleList(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			if strings.HasSuffix(strings.ToLower(entry.Name()), ".pdf") {
+				pdfPath := filepath.Join(samplesDir, entry.Name())
+				lang := ""
+				if db != nil {
+					lang = db.GetLanguage(pdfPath)
+				}
 				files = append(files, pdfFile{
 					Name: entry.Name(),
-					Path: filepath.Join(samplesDir, entry.Name()),
+					Path: pdfPath,
+					Lang: lang,
 				})
 			}
 		}
@@ -240,7 +531,7 @@ func handleList(w http.ResponseWriter, r *http.Request) {
 // viewerTemplate é o template HTML que envolve o conteúdo convertido
 // com uma barra de navegação para navegar entre páginas.
 var viewerTemplate = template.Must(template.New("viewer").Parse(`<!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="{{.Lang}}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -320,12 +611,12 @@ var viewerTemplate = template.Must(template.New("viewer").Parse(`<!DOCTYPE html>
         <a href="/">&#8592; Voltar à lista</a>
         <div class="nav-center">
             <a class="nav-btn {{if le .Page 1}}disabled{{end}}"
-               href="/convert?pdf={{.PdfPath}}&page={{.PrevPage}}&zoom={{.Zoom}}&fmt={{.Fmt}}">
+               href="/convert?pdf={{.PdfPath}}&page={{.PrevPage}}&zoom={{.Zoom}}&fmt={{.Fmt}}&lang={{.Lang}}">
                 &#9664; Anterior
             </a>
             <span class="page-info">Página {{.Page}} de {{.TotalPages}}</span>
             <a class="nav-btn {{if ge .Page .TotalPages}}disabled{{end}}"
-               href="/convert?pdf={{.PdfPath}}&page={{.NextPage}}&zoom={{.Zoom}}&fmt={{.Fmt}}">
+               href="/convert?pdf={{.PdfPath}}&page={{.NextPage}}&zoom={{.Zoom}}&fmt={{.Fmt}}&lang={{.Lang}}">
                 Próxima &#9654;
             </a>
         </div>
@@ -362,6 +653,7 @@ type viewerData struct {
 	NextPage    int
 	Zoom        string
 	Fmt         string
+	Lang        string
 }
 
 // handleConvert processa requisições de conversão PDF → HTML.
@@ -456,6 +748,15 @@ func handleConvert(w http.ResponseWriter, r *http.Request) {
 	displayZoom := strconv.FormatFloat(opts.Zoom, 'f', 2, 64)
 	displayFmt := opts.ImageFmt
 
+	// Resolver idioma: query param > banco de dados > default
+	lang := query.Get("lang")
+	if lang == "" && db != nil {
+		lang = db.GetLanguage(pdfPath)
+	}
+	if lang == "" {
+		lang = "en"
+	}
+
 	data := viewerData{
 		HTMLContent: template.HTML(result.HTML),
 		PdfPath:     pdfPath,
@@ -466,6 +767,7 @@ func handleConvert(w http.ResponseWriter, r *http.Request) {
 		NextPage:    nextPage,
 		Zoom:        displayZoom,
 		Fmt:         displayFmt,
+		Lang:        lang,
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
