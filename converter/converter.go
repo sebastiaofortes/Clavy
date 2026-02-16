@@ -5,10 +5,14 @@ package converter
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"regexp"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -55,18 +59,26 @@ func Convert(pdfPath string, opts Options) (*Result, error) {
 		return nil, fmt.Errorf("arquivo PDF não encontrado: %s", pdfPath)
 	}
 
-	// 3. Montar argumentos
-	args := buildArgs(pdfPath, opts)
+	// 3. Criar diretório temporário para a saída
+	tmpDir, err := os.MkdirTemp("", "pdf-to-html-*")
+	if err != nil {
+		return nil, fmt.Errorf("erro ao criar diretório temporário: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
 
-	// 4. Criar contexto com timeout
+	outFile := filepath.Join(tmpDir, "output.html")
+
+	// 4. Montar argumentos
+	args := buildArgs(pdfPath, outFile, opts)
+
+	// 5. Criar contexto com timeout
 	ctx, cancel := context.WithTimeout(context.Background(), opts.Timeout)
 	defer cancel()
 
-	// 5. Executar o comando
+	// 6. Executar o comando
 	cmd := exec.CommandContext(ctx, binPath, args...)
 
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
+	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
@@ -76,18 +88,30 @@ func Convert(pdfPath string, opts Options) (*Result, error) {
 		return nil, fmt.Errorf("erro ao executar pdftohtml: %w\nstderr: %s", err, stderr.String())
 	}
 
-	// 6. Retornar resultado
+	// 7. Ler o HTML gerado
+	htmlBytes, err := os.ReadFile(outFile)
+	if err != nil {
+		return nil, fmt.Errorf("erro ao ler HTML gerado: %w", err)
+	}
+
+	html := string(htmlBytes)
+
+	// 8. Embutir imagens como data URIs se solicitado
+	if opts.EmbedImages {
+		html = embedImages(html, tmpDir, opts.ImageFmt)
+	}
+
 	return &Result{
-		HTML:    stdout.String(),
+		HTML:    html,
 		PageNum: opts.Page,
 	}, nil
 }
 
 // buildArgs monta os argumentos do comando pdftohtml.
-func buildArgs(pdfPath string, opts Options) []string {
+func buildArgs(pdfPath, outFile string, opts Options) []string {
 	args := []string{
 		"-noframes", // HTML único, sem frameset
-		"-stdout",   // saída para stdout (capturamos no Go)
+		"-nodrm",    // ignorar restrições de DRM/cópia
 		"-q",        // modo silencioso
 	}
 
@@ -107,15 +131,58 @@ func buildArgs(pdfPath string, opts Options) []string {
 		args = append(args, "-fmt", opts.ImageFmt)
 	}
 
-	// Embutir imagens como data URIs
-	if opts.EmbedImages {
-		args = append(args, "-dataurls")
-	}
-
-	// Arquivo de entrada (deve ser o último argumento)
-	args = append(args, pdfPath)
+	// Arquivo de entrada e saída
+	args = append(args, pdfPath, outFile)
 
 	return args
+}
+
+// imgSrcRegex encontra referências a imagens no HTML (src="arquivo.png" ou src="arquivo.jpg").
+var imgSrcRegex = regexp.MustCompile(`src="([^"]+\.(png|jpg))"`)
+
+// embedImages substitui referências a imagens no HTML por data URIs base64.
+func embedImages(html, imgDir, imgFmt string) string {
+	mimeType := "image/png"
+	if imgFmt == "jpg" {
+		mimeType = "image/jpeg"
+	}
+
+	return imgSrcRegex.ReplaceAllStringFunc(html, func(match string) string {
+		// Extrair o nome do arquivo da referência
+		parts := imgSrcRegex.FindStringSubmatch(match)
+		if len(parts) < 2 {
+			return match
+		}
+
+		imgName := parts[1]
+		imgPath := filepath.Join(imgDir, imgName)
+
+		// Se o arquivo não existir no tmpDir, tentar só o basename
+		if _, err := os.Stat(imgPath); os.IsNotExist(err) {
+			imgPath = filepath.Join(imgDir, filepath.Base(imgName))
+		}
+
+		imgData, err := os.ReadFile(imgPath)
+		if err != nil {
+			return match // manter referência original se falhar
+		}
+
+		b64 := base64.StdEncoding.EncodeToString(imgData)
+		return fmt.Sprintf(`src="data:%s;base64,%s"`, mimeType, b64)
+	})
+}
+
+// mimeForExt retorna o MIME type a partir da extensão do ficheiro.
+func mimeForExt(filename string) string {
+	ext := strings.ToLower(filepath.Ext(filename))
+	switch ext {
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".png":
+		return "image/png"
+	default:
+		return "application/octet-stream"
+	}
 }
 
 // CheckDependencies verifica se o pdftohtml (Poppler) está instalado
