@@ -125,10 +125,21 @@ var listTemplate = template.Must(template.New("list").Parse(`<!DOCTYPE html>
         .pdf-name {
             font-weight: 500;
         }
-        .pdf-arrow {
+        .pdf-badge {
             margin-left: auto;
+            background: #e0f0ff;
+            color: #1a73e8;
+            font-size: 0.75rem;
+            padding: 0.2rem 0.5rem;
+            border-radius: 10px;
+            font-weight: 500;
+        }
+        .pdf-badge:empty { display: none; }
+        .pdf-arrow {
+            margin-left: 0.75rem;
             color: #999;
             font-size: 1.2rem;
+            flex-shrink: 0;
         }
         .empty {
             color: #999;
@@ -139,14 +150,15 @@ var listTemplate = template.Must(template.New("list").Parse(`<!DOCTYPE html>
 </head>
 <body>
     <h1>PDF to HTML</h1>
-    <p class="subtitle">Clique em um PDF para visualizar a primeira página convertida em HTML.</p>
+    <p class="subtitle">Clique em um PDF para continuar de onde parou.</p>
     {{if .Files}}
     <ul class="pdf-list">
         {{range .Files}}
         <li class="pdf-item">
-            <a href="/convert?pdf={{.Path}}&page=1">
+            <a href="#" onclick="openPdf('{{.Path}}'); return false;">
                 <span class="pdf-icon">&#128196;</span>
                 <span class="pdf-name">{{.Name}}</span>
+                <span class="pdf-badge" id="badge-{{.Path}}"></span>
                 <span class="pdf-arrow">&#8594;</span>
             </a>
         </li>
@@ -156,6 +168,32 @@ var listTemplate = template.Must(template.New("list").Parse(`<!DOCTYPE html>
     <p class="empty">Nenhum arquivo PDF encontrado na pasta "{{.Dir}}".</p>
     <p class="empty">Coloque seus PDFs na pasta e recarregue a página.</p>
     {{end}}
+    <script>
+        function getBookmark(pdfPath) {
+            try {
+                var data = JSON.parse(localStorage.getItem('pdf-bookmarks') || '{}');
+                return data[pdfPath] || null;
+            } catch(e) { return null; }
+        }
+
+        function openPdf(pdfPath) {
+            var bookmark = getBookmark(pdfPath);
+            var page = bookmark ? bookmark.page : 1;
+            window.location.href = '/convert?pdf=' + encodeURIComponent(pdfPath) + '&page=' + page;
+        }
+
+        // Mostrar badges com a última página lida
+        document.addEventListener('DOMContentLoaded', function() {
+            var badges = document.querySelectorAll('.pdf-badge');
+            badges.forEach(function(badge) {
+                var pdfPath = badge.id.replace('badge-', '');
+                var bookmark = getBookmark(pdfPath);
+                if (bookmark) {
+                    badge.textContent = 'pág. ' + bookmark.page;
+                }
+            });
+        });
+    </script>
 </body>
 </html>`))
 
@@ -296,6 +334,20 @@ var viewerTemplate = template.Must(template.New("viewer").Parse(`<!DOCTYPE html>
     <div class="content">
         {{.HTMLContent}}
     </div>
+    <script>
+        // Salvar a página atual no localStorage
+        (function() {
+            try {
+                var data = JSON.parse(localStorage.getItem('pdf-bookmarks') || '{}');
+                data['{{.PdfPath}}'] = {
+                    page: {{.Page}},
+                    total: {{.TotalPages}},
+                    timestamp: new Date().toISOString()
+                };
+                localStorage.setItem('pdf-bookmarks', JSON.stringify(data));
+            } catch(e) {}
+        })();
+    </script>
 </body>
 </html>`))
 
