@@ -650,6 +650,30 @@ var viewerTemplate = template.Must(template.New("viewer").Parse(`<!DOCTYPE html>
         .content {
             margin-top: 52px;
         }
+        .font-controls {
+            display: flex;
+            align-items: center;
+            gap: 0.3rem;
+        }
+        .font-btn {
+            background: #16213e;
+            color: #fff;
+            border: 1px solid #0f3460;
+            border-radius: 6px;
+            padding: 0.25rem 0.6rem;
+            font-size: 0.85rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+            line-height: 1;
+        }
+        .font-btn:hover { background: #0f3460; }
+        .font-label {
+            font-size: 0.7rem;
+            color: #8ecae6;
+            min-width: 30px;
+            text-align: center;
+        }
     </style>
 </head>
 <body>
@@ -666,7 +690,11 @@ var viewerTemplate = template.Must(template.New("viewer").Parse(`<!DOCTYPE html>
                 Próxima &#9654;
             </a>
         </div>
-        <span class="file-name">{{.FileName}}</span>
+        <div class="font-controls">
+            <button class="font-btn" onclick="changeFontSize(-1)" title="Diminuir fonte">A&minus;</button>
+            <span class="font-label" id="font-delta">0</span>
+            <button class="font-btn" onclick="changeFontSize(1)" title="Aumentar fonte">A+</button>
+        </div>
     </nav>
     <div class="content">
         {{.HTMLContent}}
@@ -682,6 +710,51 @@ var viewerTemplate = template.Must(template.New("viewer").Parse(`<!DOCTYPE html>
                     timestamp: new Date().toISOString()
                 };
                 localStorage.setItem('pdf-bookmarks', JSON.stringify(data));
+            } catch(e) {}
+        })();
+
+        // Controle de tamanho de fonte (A- / A+)
+        // Funciona em dois modos:
+        //   1. Se existem <font size="...">: ajusta o atributo size de cada um
+        //   2. Senão: ajusta o font-size CSS do container de conteúdo
+        var fontDelta = 0;
+        var fontDeltaKey = 'pdf-font-delta';
+        var fonts = document.querySelectorAll('.content font[size]');
+        var originalSizes = [];
+        var hasFontTags = fonts.length > 0;
+
+        if (hasFontTags) {
+            fonts.forEach(function(el) {
+                originalSizes.push(parseInt(el.getAttribute('size'), 10) || 3);
+            });
+        }
+
+        function applyFontDelta(delta) {
+            fontDelta = Math.max(-8, Math.min(20, delta));
+            if (hasFontTags) {
+                fonts.forEach(function(el, i) {
+                    var newSize = Math.max(1, originalSizes[i] + fontDelta);
+                    el.setAttribute('size', newSize);
+                });
+            } else {
+                var basePx = 16;
+                var newPx = Math.max(8, basePx + fontDelta * 2);
+                document.querySelector('.content').style.fontSize = newPx + 'px';
+            }
+            document.getElementById('font-delta').textContent =
+                (fontDelta >= 0 ? '+' : '') + fontDelta;
+            try { localStorage.setItem(fontDeltaKey, fontDelta.toString()); } catch(e) {}
+        }
+
+        function changeFontSize(step) {
+            applyFontDelta(fontDelta + step);
+        }
+
+        // Restaurar delta salvo
+        (function() {
+            try {
+                var saved = parseInt(localStorage.getItem(fontDeltaKey), 10);
+                if (!isNaN(saved)) applyFontDelta(saved);
             } catch(e) {}
         })();
     </script>
