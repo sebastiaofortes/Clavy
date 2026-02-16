@@ -185,6 +185,40 @@ func mimeForExt(filename string) string {
 	}
 }
 
+// PageCount retorna o número total de páginas de um arquivo PDF
+// usando o pdfinfo do Poppler.
+func PageCount(pdfPath string) (int, error) {
+	binPath, err := exec.LookPath("pdfinfo")
+	if err != nil {
+		return 0, fmt.Errorf("pdfinfo não encontrado no PATH: %w", err)
+	}
+
+	if _, err := os.Stat(pdfPath); os.IsNotExist(err) {
+		return 0, fmt.Errorf("arquivo PDF não encontrado: %s", pdfPath)
+	}
+
+	cmd := exec.Command(binPath, pdfPath)
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+
+	if err := cmd.Run(); err != nil {
+		return 0, fmt.Errorf("erro ao executar pdfinfo: %w", err)
+	}
+
+	for _, line := range strings.Split(stdout.String(), "\n") {
+		if strings.HasPrefix(line, "Pages:") {
+			parts := strings.TrimSpace(strings.TrimPrefix(line, "Pages:"))
+			count, err := strconv.Atoi(parts)
+			if err != nil {
+				return 0, fmt.Errorf("erro ao parsear número de páginas: %w", err)
+			}
+			return count, nil
+		}
+	}
+
+	return 0, fmt.Errorf("não foi possível determinar o número de páginas")
+}
+
 // CheckDependencies verifica se o pdftohtml (Poppler) está instalado
 // e imprime informações sobre a versão encontrada.
 func CheckDependencies() error {

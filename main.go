@@ -199,6 +199,119 @@ func handleList(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// viewerTemplate é o template HTML que envolve o conteúdo convertido
+// com uma barra de navegação para navegar entre páginas.
+var viewerTemplate = template.Must(template.New("viewer").Parse(`<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.FileName}} — Página {{.Page}} de {{.TotalPages}}</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #f5f5f5;
+        }
+        .navbar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: #1a1a2e;
+            color: #fff;
+            padding: 0.6rem 1.5rem;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+        }
+        .navbar a {
+            color: #8ecae6;
+            text-decoration: none;
+            font-size: 0.85rem;
+        }
+        .navbar a:hover { text-decoration: underline; }
+        .nav-center {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+        .nav-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            background: #16213e;
+            color: #fff;
+            border: 1px solid #0f3460;
+            border-radius: 6px;
+            padding: 0.4rem 1rem;
+            font-size: 0.85rem;
+            cursor: pointer;
+            text-decoration: none;
+            transition: background 0.2s;
+        }
+        .nav-btn:hover { background: #0f3460; color: #fff; text-decoration: none; }
+        .nav-btn.disabled {
+            opacity: 0.35;
+            pointer-events: none;
+            cursor: default;
+        }
+        .page-info {
+            font-size: 0.85rem;
+            color: #ccc;
+            min-width: 120px;
+            text-align: center;
+        }
+        .file-name {
+            font-size: 0.85rem;
+            color: #aaa;
+            max-width: 200px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .content {
+            margin-top: 52px;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar">
+        <a href="/">&#8592; Voltar à lista</a>
+        <div class="nav-center">
+            <a class="nav-btn {{if le .Page 1}}disabled{{end}}"
+               href="/convert?pdf={{.PdfPath}}&page={{.PrevPage}}&zoom={{.Zoom}}&fmt={{.Fmt}}">
+                &#9664; Anterior
+            </a>
+            <span class="page-info">Página {{.Page}} de {{.TotalPages}}</span>
+            <a class="nav-btn {{if ge .Page .TotalPages}}disabled{{end}}"
+               href="/convert?pdf={{.PdfPath}}&page={{.NextPage}}&zoom={{.Zoom}}&fmt={{.Fmt}}">
+                Próxima &#9654;
+            </a>
+        </div>
+        <span class="file-name">{{.FileName}}</span>
+    </nav>
+    <div class="content">
+        {{.HTMLContent}}
+    </div>
+</body>
+</html>`))
+
+// viewerData contém os dados para o template de visualização.
+type viewerData struct {
+	HTMLContent template.HTML
+	PdfPath     string
+	FileName    string
+	Page        int
+	TotalPages  int
+	PrevPage    int
+	NextPage    int
+	Zoom        string
+	Fmt         string
+}
+
 // handleConvert processa requisições de conversão PDF → HTML.
 //
 // Query params:
@@ -233,7 +346,8 @@ func handleConvert(w http.ResponseWriter, r *http.Request) {
 		opts.Page = p
 	}
 
-	if zoomStr := query.Get("zoom"); zoomStr != "" {
+	zoomStr := query.Get("zoom")
+	if zoomStr != "" {
 		z, err := strconv.ParseFloat(zoomStr, 64)
 		if err != nil || z <= 0 {
 			http.Error(w, "Parâmetro 'zoom' deve ser um número positivo", http.StatusBadRequest)
@@ -242,7 +356,8 @@ func handleConvert(w http.ResponseWriter, r *http.Request) {
 		opts.Zoom = z
 	}
 
-	if fmtStr := query.Get("fmt"); fmtStr != "" {
+	fmtStr := query.Get("fmt")
+	if fmtStr != "" {
 		if fmtStr != "png" && fmtStr != "jpg" {
 			http.Error(w, "Parâmetro 'fmt' deve ser 'png' ou 'jpg'", http.StatusBadRequest)
 			return
@@ -260,13 +375,51 @@ func handleConvert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Retornar HTML
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Content-Length", strconv.Itoa(len(result.HTML)))
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(result.HTML))
+	// Obter total de páginas para a navegação
+	totalPages, err := converter.PageCount(pdfPath)
+	if err != nil {
+		log.Printf("Aviso: não foi possível contar páginas: %v", err)
+		totalPages = 0
+	}
 
-	log.Printf("Conversão concluída: %d bytes", len(result.HTML))
+	// Se page=0 (todas) ou não há info de páginas, retornar HTML puro
+	if opts.Page == 0 || totalPages == 0 {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Write([]byte(result.HTML))
+		log.Printf("Conversão concluída: %d bytes", len(result.HTML))
+		return
+	}
+
+	// Renderizar com barra de navegação
+	prevPage := opts.Page - 1
+	if prevPage < 1 {
+		prevPage = 1
+	}
+	nextPage := opts.Page + 1
+	if nextPage > totalPages {
+		nextPage = totalPages
+	}
+
+	// Preservar zoom e fmt nos links
+	displayZoom := strconv.FormatFloat(opts.Zoom, 'f', 2, 64)
+	displayFmt := opts.ImageFmt
+
+	data := viewerData{
+		HTMLContent: template.HTML(result.HTML),
+		PdfPath:     pdfPath,
+		FileName:    filepath.Base(pdfPath),
+		Page:        opts.Page,
+		TotalPages:  totalPages,
+		PrevPage:    prevPage,
+		NextPage:    nextPage,
+		Zoom:        displayZoom,
+		Fmt:         displayFmt,
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	viewerTemplate.Execute(w, data)
+
+	log.Printf("Conversão concluída: página %d/%d", opts.Page, totalPages)
 }
 
 // handleHealth retorna o status do servidor.
