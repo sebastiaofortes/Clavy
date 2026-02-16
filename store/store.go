@@ -74,6 +74,15 @@ func (s *Store) GetLanguage(pdfPath string) string {
 	return meta.Language
 }
 
+// Delete remove os metadados de um PDF do banco de dados.
+func (s *Store) Delete(pdfPath string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	delete(s.data, pdfPath)
+	return s.save()
+}
+
 // All retorna todos os metadados.
 func (s *Store) All() map[string]PDFMeta {
 	s.mu.RLock()

@@ -81,6 +81,7 @@ func startServer(port string) {
 
 	http.HandleFunc("/", handleList)
 	http.HandleFunc("/upload", handleUpload)
+	http.HandleFunc("/delete", handleDelete)
 	http.HandleFunc("/convert", handleConvert)
 	http.HandleFunc("/health", handleHealth)
 
@@ -378,12 +379,33 @@ var listTemplate = template.Must(template.New("list").Parse(`<!DOCTYPE html>
         .pdf-item:hover {
             box-shadow: 0 2px 8px rgba(0,0,0,0.1);
         }
+        .pdf-item-row {
+            display: flex;
+            align-items: center;
+            padding: 0.5rem 1.25rem 0.5rem 0;
+        }
         .pdf-item a {
             display: flex;
             align-items: center;
-            padding: 1rem 1.25rem;
+            flex: 1;
+            padding: 0.5rem 0 0.5rem 1.25rem;
             text-decoration: none;
             color: #333;
+        }
+        .delete-btn {
+            background: none;
+            border: none;
+            color: #ccc;
+            font-size: 1.1rem;
+            cursor: pointer;
+            padding: 0.4rem 0.5rem;
+            border-radius: 6px;
+            transition: all 0.15s;
+            flex-shrink: 0;
+        }
+        .delete-btn:hover {
+            background: #fce8e6;
+            color: #c5221f;
         }
         .pdf-icon {
             font-size: 1.5rem;
@@ -436,13 +458,16 @@ var listTemplate = template.Must(template.New("list").Parse(`<!DOCTYPE html>
     <ul class="pdf-list">
         {{range .Files}}
         <li class="pdf-item">
-            <a href="#" onclick="openPdf('{{.Path}}', '{{.Lang}}'); return false;">
-                <span class="pdf-icon">&#128196;</span>
-                <span class="pdf-name">{{.Name}}</span>
-                {{if .Lang}}<span class="lang-tag">{{.Lang}}</span>{{end}}
-                <span class="pdf-badge" id="badge-{{.Path}}"></span>
-                <span class="pdf-arrow">&#8594;</span>
-            </a>
+            <div class="pdf-item-row">
+                <a href="#" onclick="openPdf('{{.Path}}', '{{.Lang}}'); return false;">
+                    <span class="pdf-icon">&#128196;</span>
+                    <span class="pdf-name">{{.Name}}</span>
+                    {{if .Lang}}<span class="lang-tag">{{.Lang}}</span>{{end}}
+                    <span class="pdf-badge" id="badge-{{.Path}}"></span>
+                    <span class="pdf-arrow">&#8594;</span>
+                </a>
+                <button class="delete-btn" title="Excluir" onclick="deletePdf('{{.Path}}', '{{.Name}}')">&#128465;</button>
+            </div>
         </li>
         {{end}}
     </ul>
@@ -456,6 +481,27 @@ var listTemplate = template.Must(template.New("list").Parse(`<!DOCTYPE html>
                 var data = JSON.parse(localStorage.getItem('pdf-bookmarks') || '{}');
                 return data[pdfPath] || null;
             } catch(e) { return null; }
+        }
+
+        function deletePdf(pdfPath, name) {
+            if (!confirm('Excluir "' + name + '"?\nO arquivo e seus metadados serão removidos permanentemente.')) {
+                return;
+            }
+            fetch('/delete?pdf=' + encodeURIComponent(pdfPath), { method: 'DELETE' })
+                .then(function(resp) {
+                    if (resp.ok) {
+                        // Remover bookmark do localStorage
+                        try {
+                            var data = JSON.parse(localStorage.getItem('pdf-bookmarks') || '{}');
+                            delete data[pdfPath];
+                            localStorage.setItem('pdf-bookmarks', JSON.stringify(data));
+                        } catch(e) {}
+                        window.location.reload();
+                    } else {
+                        resp.text().then(function(msg) { alert('Erro: ' + msg); });
+                    }
+                })
+                .catch(function(err) { alert('Erro de rede: ' + err); });
         }
 
         function openPdf(pdfPath, lang) {
@@ -654,6 +700,52 @@ type viewerData struct {
 	Zoom        string
 	Fmt         string
 	Lang        string
+}
+
+// handleDelete exclui um PDF do disco e do banco de dados.
+//
+// DELETE /delete?pdf=samples/teste.pdf
+func handleDelete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, "Método não permitido. Use DELETE.", http.StatusMethodNotAllowed)
+		return
+	}
+
+	pdfPath := r.URL.Query().Get("pdf")
+	if pdfPath == "" {
+		http.Error(w, "Parâmetro 'pdf' é obrigatório.", http.StatusBadRequest)
+		return
+	}
+
+	// Segurança: garantir que o arquivo está dentro da pasta samples
+	absPath, err := filepath.Abs(pdfPath)
+	if err != nil {
+		http.Error(w, "Caminho inválido.", http.StatusBadRequest)
+		return
+	}
+	absSamples, _ := filepath.Abs(samplesDir)
+	if !strings.HasPrefix(absPath, absSamples+string(os.PathSeparator)) {
+		http.Error(w, "Apenas arquivos na pasta samples podem ser excluídos.", http.StatusForbidden)
+		return
+	}
+
+	// Remover arquivo do disco
+	if err := os.Remove(pdfPath); err != nil && !os.IsNotExist(err) {
+		log.Printf("Erro ao remover arquivo %s: %v", pdfPath, err)
+		http.Error(w, "Erro ao remover arquivo: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Remover do banco de dados
+	if db != nil {
+		if err := db.Delete(pdfPath); err != nil {
+			log.Printf("Erro ao remover metadados de %s: %v", pdfPath, err)
+		}
+	}
+
+	log.Printf("Excluído: %s", pdfPath)
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("OK"))
 }
 
 // handleConvert processa requisições de conversão PDF → HTML.
