@@ -3,14 +3,18 @@ package main
 import (
 	"flag"
 	"fmt"
+	"html/template"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/sebastiaofortes/pdf-to-html/converter"
 )
+
+const samplesDir = "samples"
 
 func main() {
 	// Definir flags da CLI
@@ -50,6 +54,7 @@ func startServer(port string) {
 		os.Exit(1)
 	}
 
+	http.HandleFunc("/", handleList)
 	http.HandleFunc("/convert", handleConvert)
 	http.HandleFunc("/health", handleHealth)
 
@@ -57,14 +62,141 @@ func startServer(port string) {
 	fmt.Printf("\nServidor iniciado em http://localhost%s\n", addr)
 	fmt.Println()
 	fmt.Println("Endpoints:")
-	fmt.Println("  GET /convert?pdf=<caminho>&page=<N>&zoom=<N>&fmt=<png|jpg>")
-	fmt.Println("  GET /health")
+	fmt.Println("  GET /                                                         → lista PDFs disponíveis")
+	fmt.Println("  GET /convert?pdf=<caminho>&page=<N>&zoom=<N>&fmt=<png|jpg>    → converte PDF para HTML")
+	fmt.Println("  GET /health                                                   → status do servidor")
 	fmt.Println()
-	fmt.Println("Exemplo:")
-	fmt.Printf("  curl \"http://localhost%s/convert?pdf=samples/teste.pdf&page=1\" -o resultado.html\n", addr)
+	fmt.Printf("Abra no navegador: http://localhost%s\n", addr)
 	fmt.Println()
 
 	log.Fatal(http.ListenAndServe(addr, nil))
+}
+
+// listTemplate é o template HTML para a página de listagem de PDFs.
+var listTemplate = template.Must(template.New("list").Parse(`<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF to HTML — Arquivos disponíveis</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #f5f5f5;
+            color: #333;
+            padding: 2rem;
+        }
+        h1 {
+            font-size: 1.5rem;
+            margin-bottom: 0.5rem;
+        }
+        .subtitle {
+            color: #666;
+            margin-bottom: 2rem;
+            font-size: 0.9rem;
+        }
+        .pdf-list {
+            list-style: none;
+            max-width: 600px;
+        }
+        .pdf-item {
+            background: #fff;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            margin-bottom: 0.75rem;
+            transition: box-shadow 0.2s;
+        }
+        .pdf-item:hover {
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .pdf-item a {
+            display: flex;
+            align-items: center;
+            padding: 1rem 1.25rem;
+            text-decoration: none;
+            color: #333;
+        }
+        .pdf-icon {
+            font-size: 1.5rem;
+            margin-right: 1rem;
+            flex-shrink: 0;
+        }
+        .pdf-name {
+            font-weight: 500;
+        }
+        .pdf-arrow {
+            margin-left: auto;
+            color: #999;
+            font-size: 1.2rem;
+        }
+        .empty {
+            color: #999;
+            font-style: italic;
+            margin-top: 1rem;
+        }
+    </style>
+</head>
+<body>
+    <h1>PDF to HTML</h1>
+    <p class="subtitle">Clique em um PDF para visualizar a primeira página convertida em HTML.</p>
+    {{if .Files}}
+    <ul class="pdf-list">
+        {{range .Files}}
+        <li class="pdf-item">
+            <a href="/convert?pdf={{.Path}}&page=1">
+                <span class="pdf-icon">&#128196;</span>
+                <span class="pdf-name">{{.Name}}</span>
+                <span class="pdf-arrow">&#8594;</span>
+            </a>
+        </li>
+        {{end}}
+    </ul>
+    {{else}}
+    <p class="empty">Nenhum arquivo PDF encontrado na pasta "{{.Dir}}".</p>
+    <p class="empty">Coloque seus PDFs na pasta e recarregue a página.</p>
+    {{end}}
+</body>
+</html>`))
+
+// pdfFile representa um arquivo PDF para o template.
+type pdfFile struct {
+	Name string
+	Path string
+}
+
+// handleList lista os PDFs disponíveis na pasta samples.
+func handleList(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
+
+	var files []pdfFile
+
+	entries, err := os.ReadDir(samplesDir)
+	if err == nil {
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			if strings.HasSuffix(strings.ToLower(entry.Name()), ".pdf") {
+				files = append(files, pdfFile{
+					Name: entry.Name(),
+					Path: filepath.Join(samplesDir, entry.Name()),
+				})
+			}
+		}
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	listTemplate.Execute(w, struct {
+		Files []pdfFile
+		Dir   string
+	}{
+		Files: files,
+		Dir:   samplesDir,
+	})
 }
 
 // handleConvert processa requisições de conversão PDF → HTML.
