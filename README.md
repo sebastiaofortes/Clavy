@@ -1,22 +1,11 @@
+Manual de uso:
+
 Iniciar o servidor
 
 ./pdf-to-html -serve 8080
 
-# Exemplos de curls:
+Abra no navegador: http://localhost:
 
-# Converter página 1
-```
+Selecione o livro que deseja ler
 
-curl "http://localhost:8080/convert?pdf=samples/teste.pdf&page=1" -o resultado.html
-
-```
-
-# Converter todas as páginas com zoom 2x
-```
-curl "http://localhost:8080/convert?pdf=samples/teste.pdf&zoom=2.0" -o resultado.html
-```
-
-# Abrir direto no navegador
-```
-open "http://localhost:8080/convert?pdf=samples/teste.pdf&page=1"
-```
+O sistema armazena em localStorage a última página lida pelo usuário, para ajudar o usuário a não esquecer onde parou de ler. 
