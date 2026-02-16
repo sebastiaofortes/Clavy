@@ -1,5 +1,7 @@
 Esse sistema possui;
 
+0 - utiliza Poppler v26.02.0 (instalado via brew install poppler) para realizar a conversão de PDF para HTML
+
 1 - Banco de dados baseado em arquivo de texto
 
 2 - Feature que adiciona autometicamente header a pagina do livro, permitindo sua tradução.
