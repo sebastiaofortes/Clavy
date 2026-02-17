@@ -674,6 +674,28 @@ var viewerTemplate = template.Must(template.New("viewer").Parse(`<!DOCTYPE html>
             min-width: 30px;
             text-align: center;
         }
+        .theme-controls {
+            display: flex;
+            align-items: center;
+            gap: 0.3rem;
+            margin-left: 0.5rem;
+            padding-left: 0.5rem;
+            border-left: 1px solid #0f3460;
+        }
+        .theme-btn {
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            border: 2px solid #555;
+            cursor: pointer;
+            transition: border-color 0.2s, transform 0.15s;
+            padding: 0;
+        }
+        .theme-btn:hover { transform: scale(1.15); }
+        .theme-btn.active { border-color: #8ecae6; box-shadow: 0 0 0 2px #8ecae6; }
+        .theme-btn.white  { background: #ffffff; }
+        .theme-btn.sepia  { background: #f5e6c8; }
+        .theme-btn.dark   { background: #1a1a1a; }
     </style>
 </head>
 <body>
@@ -694,6 +716,11 @@ var viewerTemplate = template.Must(template.New("viewer").Parse(`<!DOCTYPE html>
             <button class="font-btn" onclick="changeFontSize(-1)" title="Diminuir fonte">A&minus;</button>
             <span class="font-label" id="font-delta">0</span>
             <button class="font-btn" onclick="changeFontSize(1)" title="Aumentar fonte">A+</button>
+            <div class="theme-controls">
+                <button class="theme-btn white active" onclick="setTheme('white')" title="Fundo branco"></button>
+                <button class="theme-btn sepia" onclick="setTheme('sepia')" title="Fundo creme"></button>
+                <button class="theme-btn dark" onclick="setTheme('dark')" title="Fundo escuro"></button>
+            </div>
         </div>
     </nav>
     <div class="content">
@@ -755,6 +782,52 @@ var viewerTemplate = template.Must(template.New("viewer").Parse(`<!DOCTYPE html>
             try {
                 var saved = parseInt(localStorage.getItem(fontDeltaKey), 10);
                 if (!isNaN(saved)) applyFontDelta(saved);
+            } catch(e) {}
+        })();
+
+        // Controle de tema de cor (Branco / Creme / Escuro)
+        var themes = {
+            white: { bg: '#ffffff', text: '#000000', bodyBg: '#f5f5f5' },
+            sepia: { bg: '#f5e6c8', text: '#5b4636', bodyBg: '#e8d5b7' },
+            dark:  { bg: '#1a1a1a', text: '#d4d4d4', bodyBg: '#111111' }
+        };
+        var themeKey = 'pdf-theme';
+
+        function setTheme(name) {
+            var t = themes[name];
+            if (!t) return;
+            var content = document.querySelector('.content');
+            // Aplicar ao body externo
+            document.body.style.background = t.bodyBg;
+            // Aplicar ao conteúdo e seus filhos
+            content.style.color = t.text;
+            // Mudar bgcolor do body interno gerado pelo Poppler
+            var innerBody = content.querySelector('body[bgcolor]');
+            if (innerBody) {
+                innerBody.setAttribute('bgcolor', t.bg);
+                innerBody.style.color = t.text;
+            }
+            // Forçar cor em todos os textos dentro do conteúdo
+            var allText = content.querySelectorAll('*');
+            allText.forEach(function(el) {
+                if (el.tagName !== 'IMG') {
+                    el.style.color = t.text;
+                }
+            });
+            // Atualizar botão ativo
+            document.querySelectorAll('.theme-btn').forEach(function(btn) {
+                btn.classList.remove('active');
+            });
+            var activeBtn = document.querySelector('.theme-btn.' + name);
+            if (activeBtn) activeBtn.classList.add('active');
+            try { localStorage.setItem(themeKey, name); } catch(e) {}
+        }
+
+        // Restaurar tema salvo
+        (function() {
+            try {
+                var saved = localStorage.getItem(themeKey);
+                if (saved && themes[saved]) setTheme(saved);
             } catch(e) {}
         })();
     </script>
