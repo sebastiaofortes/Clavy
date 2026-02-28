@@ -1,6 +1,7 @@
 # Clavy — Documentação
 
-Aplicação Go para converter PDFs em HTML interativo, com suporte a dois modos de uso: **linha de comando (CLI)** e **servidor HTTP com interface web**.
+Clavy é uma aplicação desenvolvida para visualizar PDFs em formato de páginas HTML interativas, permitindo sua tradução pelo navegador.
+A aplicação conta também com suporte a dois modos de uso: **linha de comando (CLI)** e **servidor HTTP com interface web**.
 
 ---
 
@@ -25,7 +26,7 @@ Aplicação Go para converter PDFs em HTML interativo, com suporte a dois modos 
 
 ## Manual de Uso
 
-Este guia é para quem quer usar o Clavy sem precisar saber programar. Siga os passos abaixo e você estará lendo e traduzindo PDFs em minutos.
+Siga os passos abaixo e você estará lendo e traduzindo PDFs em minutos.
 
 ### Passo 1 — Abrir o Clavy no navegador
 
