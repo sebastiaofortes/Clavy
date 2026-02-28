@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sebastiaofortes/pdf-to-html/converter"
-	"github.com/sebastiaofortes/pdf-to-html/store"
+	"github.com/sebastiaofortes/clavy/converter"
+	"github.com/sebastiaofortes/clavy/store"
 )
 
 const (
@@ -1027,8 +1027,8 @@ func runCLI(pdfPath string, page int, zoom float64, imgFmt, output string) {
 		fmt.Fprintln(os.Stderr, "Erro: caminho do PDF é obrigatório")
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintln(os.Stderr, "Uso:")
-		fmt.Fprintln(os.Stderr, "  CLI:      pdf-to-html -pdf <arquivo.pdf> [-page N] [-zoom 1.5] [-output saida.html]")
-		fmt.Fprintln(os.Stderr, "  Servidor: pdf-to-html -serve 8080")
+		fmt.Fprintln(os.Stderr, "  CLI:      clavy -pdf <arquivo.pdf> [-page N] [-zoom 1.5] [-output saida.html]")
+		fmt.Fprintln(os.Stderr, "  Servidor: clavy -serve 8080")
 		fmt.Fprintln(os.Stderr)
 		flag.PrintDefaults()
 		os.Exit(1)

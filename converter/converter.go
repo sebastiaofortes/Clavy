@@ -60,7 +60,7 @@ func Convert(pdfPath string, opts Options) (*Result, error) {
 	}
 
 	// 3. Criar diretório temporário para a saída
-	tmpDir, err := os.MkdirTemp("", "pdf-to-html-*")
+	tmpDir, err := os.MkdirTemp("", "clavy-*")
 	if err != nil {
 		return nil, fmt.Errorf("erro ao criar diretório temporário: %w", err)
 	}

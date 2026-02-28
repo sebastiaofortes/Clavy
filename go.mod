@@ -1,3 +1,3 @@
-module github.com/sebastiaofortes/pdf-to-html
+module github.com/sebastiaofortes/clavy
 
 go 1.25.5
