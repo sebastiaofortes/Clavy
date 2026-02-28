@@ -12,6 +12,9 @@ output/
 # PDFs de teste
 samples/
 
+# Banco de dados local
+data/
+
 # Go
 *.test
 *.out
