@@ -6,6 +6,7 @@ Aplicação Go para converter PDFs em HTML interativo, com suporte a dois modos 
 
 ## Sumário
 
+- [Manual de Uso](#manual-de-uso)
 - [Visão Geral](#visão-geral)
 - [Pré-requisitos](#pré-requisitos)
 - [Instalação](#instalação)
@@ -19,6 +20,72 @@ Aplicação Go para converter PDFs em HTML interativo, com suporte a dois modos 
 - [Banco de Dados](#banco-de-dados)
 - [Limitações](#limitações)
 - [Melhorias Planejadas](#melhorias-planejadas)
+
+---
+
+## Manual de Uso
+
+Este guia é para quem quer usar o Clavy sem precisar saber programar. Siga os passos abaixo e você estará lendo e traduzindo PDFs em minutos.
+
+### Passo 1 — Abrir o Clavy no navegador
+
+Com o servidor já rodando (veja a seção [Instalação](#instalação)), abra o **Google Chrome** e acesse:
+
+```
+http://localhost:8080
+```
+
+Você verá a lista de livros disponíveis (inicialmente vazia).
+
+---
+
+### Passo 2 — Enviar um PDF
+
+1. Clique no botão **"+ Upload PDF"** no canto superior direito da tela.
+2. Na tela de upload, clique em **"Escolher arquivo"** e selecione o PDF do seu computador.
+3. No campo **"Idioma do documento"**, escolha o idioma em que o PDF está escrito (ex: *Inglês*, *Espanhol*, *Francês*). Isso permite que o Chrome ofereça tradução automática depois.
+4. Clique em **"Enviar PDF"**.
+5. Aguarde o upload. O livro aparecerá na lista principal.
+
+> **Dica:** O arquivo pode ter até **100 MB**. PDFs maiores podem demorar um pouco mais para carregar.
+
+---
+
+### Passo 3 — Abrir e ler o PDF
+
+1. Na lista principal, clique no nome do livro que você acabou de enviar.
+2. O visualizador abrirá na **primeira página** do documento.
+3. Use os botões de navegação para avançar ou voltar páginas:
+   - **← Anterior** — página anterior
+   - **Próxima →** — próxima página
+4. Ajuste o tamanho do texto com os botões **A−** (menor) e **A+** (maior).
+5. Mude o tema de leitura clicando em **Branco**, **Creme** ou **Escuro** conforme sua preferência.
+
+> **Dica:** O Clavy salva automaticamente a última página lida. Na próxima vez que abrir o mesmo livro, ele retomará de onde você parou.
+
+> **Observação:** A informação da última página lida fica guardada no armazenamento local do navegador (`localStorage`). Se você limpar o histórico ou os dados do navegador, essa informação será perdida e a leitura voltará à página 1.
+
+---
+
+### Passo 4 — Traduzir o documento com o Chrome
+
+O Chrome detecta automaticamente o idioma do documento (o mesmo que você informou no upload) e exibe uma barra de tradução.
+
+1. Quando a barra de tradução aparecer no topo do Chrome, clique em **"Traduzir"**.
+2. Se a barra não aparecer automaticamente, clique com o botão direito em qualquer parte da página e selecione **"Traduzir para o português"**.
+3. Para traduzir todas as páginas sem precisar clicar toda vez, escolha a opção **"Traduzir sempre de [idioma]"** no menu de opções da barra de tradução (ícone ⚙️ ou os três pontinhos ao lado do botão Traduzir).
+
+> **Atenção:** A tradução automática funciona melhor no **Google Chrome**. Em outros navegadores (Firefox, Safari, Edge) o comportamento pode ser diferente.
+
+---
+
+### Passo 5 — Remover um PDF
+
+Para excluir um livro da lista:
+
+1. Volte para a página inicial (`http://localhost:8080`).
+2. Ao lado do livro que deseja remover, clique no botão **"Excluir"** (ícone de lixeira).
+3. Confirme a exclusão. O arquivo e seus metadados serão apagados permanentemente.
 
 ---
 
