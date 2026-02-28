@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"html/template"
@@ -9,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -24,6 +26,69 @@ const (
 
 // db é o banco de dados de metadados dos PDFs.
 var db *store.Store
+
+// validFilenameRe permite apenas caracteres seguros em nomes de arquivo.
+var validFilenameRe = regexp.MustCompile(`^[a-zA-Z0-9._\- ]+$`)
+
+// validLanguages é a lista de idiomas suportados pelo viewer.
+var validLanguages = map[string]bool{
+	"en": true, "pt": true, "es": true, "fr": true,
+	"de": true, "it": true, "ja": true, "zh": true,
+	"ru": true, "ko": true, "ar": true, "nl": true,
+}
+
+// sanitizeFilename valida e retorna apenas o nome base do arquivo,
+// rejeitando caminhos, null bytes e caracteres não permitidos.
+func sanitizeFilename(filename string) (string, error) {
+	name := filepath.Base(filename)
+	if name == "" || name == "." || name == ".." {
+		return "", errors.New("nome de arquivo inválido")
+	}
+	if strings.ContainsRune(name, '\x00') {
+		return "", errors.New("nome de arquivo contém caracteres inválidos")
+	}
+	if strings.HasPrefix(name, ".") {
+		return "", errors.New("nome de arquivo não pode começar com ponto")
+	}
+	if !validFilenameRe.MatchString(name) {
+		return "", errors.New("nome de arquivo contém caracteres não permitidos")
+	}
+	return name, nil
+}
+
+// validatePDFPath verifica que pdfPath aponta para um arquivo dentro de samplesDir,
+// resolvendo symlinks para prevenir ataques de traversal e symlink race.
+func validatePDFPath(pdfPath string) (string, error) {
+	absSamples, err := filepath.Abs(samplesDir)
+	if err != nil {
+		return "", fmt.Errorf("erro interno ao resolver samplesDir: %w", err)
+	}
+
+	absPath, err := filepath.Abs(pdfPath)
+	if err != nil {
+		return "", errors.New("caminho inválido")
+	}
+
+	// Resolver symlinks no caminho do arquivo (se existir)
+	realPath, err := filepath.EvalSymlinks(absPath)
+	if err != nil {
+		// Arquivo pode não existir ainda (ex: durante upload); usar absPath
+		realPath = absPath
+	}
+
+	// Verificar contenção usando filepath.Rel, que é imune a prefix spoofing
+	rel, err := filepath.Rel(absSamples, realPath)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return "", errors.New("acesso negado: arquivo fora da pasta samples")
+	}
+
+	return realPath, nil
+}
+
+// isValidLanguage retorna true se lang está na lista de idiomas suportados.
+func isValidLanguage(lang string) bool {
+	return validLanguages[lang]
+}
 
 func main() {
 	// Definir flags da CLI
@@ -294,21 +359,29 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
+	// Sanitizar e validar nome do arquivo
+	safeFilename, err := sanitizeFilename(header.Filename)
+	if err != nil {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		uploadTemplate.Execute(w, uploadData{Message: "Nome de arquivo inválido.", IsError: true})
+		return
+	}
+
 	// Validar extensão
-	if !strings.HasSuffix(strings.ToLower(header.Filename), ".pdf") {
+	if !strings.HasSuffix(strings.ToLower(safeFilename), ".pdf") {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		uploadTemplate.Execute(w, uploadData{Message: "Apenas arquivos PDF são aceitos.", IsError: true})
 		return
 	}
 
-	// Obter idioma
+	// Obter e validar idioma
 	language := r.FormValue("language")
-	if language == "" {
+	if !isValidLanguage(language) {
 		language = "en"
 	}
 
 	// Salvar arquivo na pasta samples
-	dstPath := filepath.Join(samplesDir, header.Filename)
+	dstPath := filepath.Join(samplesDir, safeFilename)
 	dst, err := os.Create(dstPath)
 	if err != nil {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -325,7 +398,7 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 
 	// Salvar metadados no banco de dados
 	meta := store.PDFMeta{
-		Filename:   header.Filename,
+		Filename:   safeFilename,
 		Language:   language,
 		UploadedAt: time.Now(),
 	}
@@ -333,11 +406,11 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Erro ao salvar metadados: %v", err)
 	}
 
-	log.Printf("Upload: %s (idioma: %s)", header.Filename, language)
+	log.Printf("Upload: %s (idioma: %s)", safeFilename, language)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	uploadTemplate.Execute(w, uploadData{
-		Message: fmt.Sprintf("PDF \"%s\" enviado com sucesso! Idioma: %s", header.Filename, language),
+		Message: fmt.Sprintf("PDF \"%s\" enviado com sucesso! Idioma: %s", safeFilename, language),
 	})
 }
 
@@ -863,21 +936,17 @@ func handleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Segurança: garantir que o arquivo está dentro da pasta samples
-	absPath, err := filepath.Abs(pdfPath)
+	// Segurança: garantir que o arquivo está dentro da pasta samples,
+	// resolvendo symlinks para prevenir ataques de traversal.
+	absPath, err := validatePDFPath(pdfPath)
 	if err != nil {
-		http.Error(w, "Caminho inválido.", http.StatusBadRequest)
-		return
-	}
-	absSamples, _ := filepath.Abs(samplesDir)
-	if !strings.HasPrefix(absPath, absSamples+string(os.PathSeparator)) {
-		http.Error(w, "Apenas arquivos na pasta samples podem ser excluídos.", http.StatusForbidden)
+		http.Error(w, err.Error(), http.StatusForbidden)
 		return
 	}
 
-	// Remover arquivo do disco
-	if err := os.Remove(pdfPath); err != nil && !os.IsNotExist(err) {
-		log.Printf("Erro ao remover arquivo %s: %v", pdfPath, err)
+	// Remover arquivo do disco usando o caminho validado
+	if err := os.Remove(absPath); err != nil && !os.IsNotExist(err) {
+		log.Printf("Erro ao remover arquivo %s: %v", absPath, err)
 		http.Error(w, "Erro ao remover arquivo: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -889,7 +958,7 @@ func handleDelete(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	log.Printf("Excluído: %s", pdfPath)
+	log.Printf("Excluído: %s", absPath)
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("OK"))
 }
@@ -916,6 +985,13 @@ func handleConvert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Segurança: validar que o pdf está dentro de samples
+	absPath, err := validatePDFPath(pdfPath)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+
 	// Parâmetros opcionais
 	opts := converter.DefaultOptions()
 
@@ -931,8 +1007,8 @@ func handleConvert(w http.ResponseWriter, r *http.Request) {
 	zoomStr := query.Get("zoom")
 	if zoomStr != "" {
 		z, err := strconv.ParseFloat(zoomStr, 64)
-		if err != nil || z <= 0 {
-			http.Error(w, "Parâmetro 'zoom' deve ser um número positivo", http.StatusBadRequest)
+		if err != nil || z <= 0 || z > 10 {
+			http.Error(w, "Parâmetro 'zoom' deve ser um número entre 0 e 10", http.StatusBadRequest)
 			return
 		}
 		opts.Zoom = z
@@ -948,9 +1024,9 @@ func handleConvert(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Executar conversão
-	log.Printf("Convertendo: pdf=%s page=%d zoom=%.2f fmt=%s", pdfPath, opts.Page, opts.Zoom, opts.ImageFmt)
+	log.Printf("Convertendo: pdf=%s page=%d zoom=%.2f fmt=%s", absPath, opts.Page, opts.Zoom, opts.ImageFmt)
 
-	result, err := converter.Convert(pdfPath, opts)
+	result, err := converter.Convert(absPath, opts)
 	if err != nil {
 		log.Printf("Erro na conversão: %v", err)
 		http.Error(w, fmt.Sprintf("Erro na conversão: %v", err), http.StatusInternalServerError)
@@ -958,7 +1034,7 @@ func handleConvert(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Obter total de páginas para a navegação
-	totalPages, err := converter.PageCount(pdfPath)
+	totalPages, err := converter.PageCount(absPath)
 	if err != nil {
 		log.Printf("Aviso: não foi possível contar páginas: %v", err)
 		totalPages = 0
@@ -988,6 +1064,9 @@ func handleConvert(w http.ResponseWriter, r *http.Request) {
 
 	// Resolver idioma: query param > banco de dados > default
 	lang := query.Get("lang")
+	if !isValidLanguage(lang) {
+		lang = ""
+	}
 	if lang == "" && db != nil {
 		lang = db.GetLanguage(pdfPath)
 	}
