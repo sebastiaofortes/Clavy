@@ -172,7 +172,7 @@ var uploadTemplate = template.Must(template.New("upload").Parse(`<!DOCTYPE html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PDF to HTML — Upload</title>
+    <title>Clavy — Upload</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -420,7 +420,7 @@ var listTemplate = template.Must(template.New("list").Parse(`<!DOCTYPE html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PDF to HTML — Arquivos disponíveis</title>
+    <title>Clavy — Arquivos disponíveis</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -523,7 +523,7 @@ var listTemplate = template.Must(template.New("list").Parse(`<!DOCTYPE html>
 </head>
 <body>
     <div style="display: flex; align-items: center; justify-content: space-between; max-width: 600px;">
-        <h1>PDF to HTML</h1>
+        <h1>Clavy</h1>
         <a href="/upload" style="background: #1a73e8; color: #fff; padding: 0.5rem 1.2rem; border-radius: 8px; text-decoration: none; font-size: 0.85rem;">+ Upload PDF</a>
     </div>
     <p class="subtitle">Clique em um PDF para continuar de onde parou.</p>
